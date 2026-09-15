@@ -34,8 +34,8 @@ logger = logging.getLogger(__name__)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 សួស្តី! ខ្ញុំជា Video Translation & Cutter Bot.\n\n"
-        "✂️ **วิธีใช้ (วิธีใช้งาน):**\n"
-        "1️⃣ កំណត់នាទីដែលចង់កាត់ ឧទាហរណ៍៖ បញ្ជូន `/cut 5` (កាត់ម្តង ៥នាទី)\n"
+        "✂️ **របៀបប្រើប្រាស់៖**\n"
+        "1️⃣ កំណត់នាទីដែលចង់កាត់ ឧទាហរណ៍៖ វាយ `/cut 5` (កាត់ម្តង ៥នាទី)\n"
         "2️⃣ ផ្ញើវីដេអូរបស់អ្នកមកទីនេះ (ក្រោម ១ម៉ោង)\n"
         "3️⃣ រើសភាសាដើម្បីបកប្រែ និងទទួលវីដេអូកាត់ជាកង់ៗ!"
     )
@@ -49,9 +49,9 @@ async def cut_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         minutes = int(context.args[0])
         context.user_data['cut_minutes'] = minutes
-        await update.message.reply_text(f"✅ បានកំណត់ការកាត់វីដេអូក្នុងទំហំ **{minutes} នាទី/កង់** រួចរាល់!\n👇 ឥឡូវសូមផ្ញើវីដេអូមកទីនេះបានเลย។")
+        await update.message.reply_text(f"✅ បានកំណត់ការកាត់វីដេអូក្នុងទំហំ **{minutes} នាទី/កង់** រួចរាល់!\n👇 ឥឡូវសូមផ្ញើវីដេអូមកទីនេះបាន។")
     except ValueError:
-        await update.message.reply_text("⚠️ សូមใส่លេខនាទីជាតួលេខត្រឹមត្រូវ ឧទាហរណ៍៖ `/cut 5`")
+        await update.message.reply_text("⚠️ សូមវាយបញ្ចូលលេខនាទីជាតួលេខត្រឹមត្រូវ ឧទាហរណ៍៖ `/cut 5`")
 
 # --- HANDLE VIDEO UPLOAD & CUTTING ---
 async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -66,13 +66,11 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         context.user_data['pending_file'] = input_path
         
-        # យកចំនួននាទីដែល User បានកំណត់ (default 5 នាទីបើមិនបានដាក់)
         chunk_minutes = context.user_data.get('cut_minutes', 5)
         chunk_seconds = chunk_minutes * 60
         
         await status_msg.edit_text(f"✂️ កំពុងកាត់វីដេអូជាកង់ៗ (កង់ละ {chunk_minutes} នាទី)...")
         
-        # ឆែករយៈពេលវីដេអូសរុបដោយប្រើ ffprobe
         cmd_probe = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {input_path}"
         try:
             duration = float(subprocess.check_output(cmd_probe, shell=True).decode().strip())
@@ -95,14 +93,12 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         await status_msg.delete()
         
-        # ส่งកង់វីដេអូត្រឡប់ទៅ Telegram វិញ
         await message.reply_text(f"✅ កាត់វីដេអូរួចរាល់បានចំនួន **{len(chunk_files)} កង់**! កំពុងផ្ញើជូន...")
         for idx, cf in enumerate(chunk_files, 1):
             with open(cf, 'rb') as vid:
                 await message.reply_video(video=vid, caption=f"🎬 ភាគទី {idx} (កង់ละ {chunk_minutes} នាទី)")
             os.remove(cf)
             
-        # បង្ហាញប៊ូតុងជ្រើសរើសភាសាសម្រាប់ការបកប្រែបន្ត
         keyboard = [
             [
                 InlineKeyboardButton("🇰🇭 ខ្មែរ (Khmer)", callback_data="lang_km"),
