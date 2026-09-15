@@ -1,5 +1,4 @@
 python-telegram-bot
 google-genai
-requests
-yt-dlp
 flask
+gTTS
