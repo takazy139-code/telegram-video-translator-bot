@@ -7,6 +7,7 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Messa
 from flask import Flask
 from multiprocessing import Process
 from gtts import gTTS
+from pydub import AudioSegment
 
 # --- FLASK WEB SERVER ---
 app = Flask(__name__)
@@ -178,24 +179,39 @@ async def voice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(f"ចំណងជើងនិងសេចក្តីសង្ខេប ({selected_lang})៖\n\n{result_text}")
             
             # បង្កើតឯកសារសម្លេង (Voice MP3)
-            # หมายเหตุ: gTTS ធម្មតាអត់អាចប្តូរ Pitch ស្រីប្រុសបានត្រង់ៗទេ តែយើងអាចកត់ត្រាទុកតាម Option 
-            # (បើចង់បាន Pitch ស្រី/ប្រុសពិតប្រាកដ អាចប្រើកូដកែសម្រួល Audio តាម librosa/pydub ពេលក្រោយ)
-            tts = gTTS(text=result_text, lang=lang_code, slow=False)
-            audio_path = f"dubbing_{voice_type}.mp3"
-            tts.save(audio_path)
+            raw_audio_path = "raw_output.mp3"
+            final_audio_path = f"dubbing_{voice_type}.mp3"
             
-            with open(audio_path, 'rb') as audio_file:
+            tts = gTTS(text=result_text, lang=lang_code, slow=False)
+            tts.save(raw_audio_path)
+            
+            # ប្រសិនបើជ្រើសរើសសំឡេងប្រុស យើងកែ Pitch ឱ្យទាប និងក្រាស់ជាងមុន
+            if voice_type == "male":
+                sound = AudioSegment.from_mp3(raw_audio_path)
+                # ផ្លាស់ប្តូរ Sample Rate ដើម្បីបញ្ចុះ Pitch ឱ្យទៅជាធ្ងន់បែបប្រុស
+                new_sample_rate = int(sound.frame_rate * 0.82) # បន្ថយប្រហែល 18% ឱ្យសំឡេងធ្ងន់ក្រាស់
+                male_sound = sound._spawn(sound.raw_data, overrides={'frame_rate': new_sample_rate})
+                male_sound = male_sound.set_frame_rate(44100)
+                male_sound.export(final_audio_path, format="mp3")
+            else:
+                # សំឡេងស្រីរក្សាទុកទម្រង់ដើម
+                os.rename(raw_audio_path, final_audio_path)
+                
+            if os.path.exists(raw_audio_path):
+                os.remove(raw_audio_path)
+            
+            with open(final_audio_path, 'rb') as audio_file:
                 await query.message.reply_audio(
                     audio=audio_file, 
                     title=f"Voice Dubbing ({selected_lang} - {voice_label})", 
                     caption=f"ឯកសារសម្លេង ({voice_label}) បកប្រែជាភាសា {selected_lang}"
                 )
             
-            os.remove(audio_path)
+            os.remove(final_audio_path)
             os.remove(file_path)
             client.files.delete(name=video_file.name)
         except Exception as e:
-            await query.message.reply_text(f"មានបញ្ហាក្នុងការបង្កើតសម្លេង៖ {str(e)}")
+            await query.message.reply_text(f"មានបញ្ហាក្នុងการបង្កើតសម្លេង៖ {str(e)}")
     else:
         await query.message.reply_text("រកមិនឃើញឯកសារវីដេអូទេ សូមផ្ញើមកម្ដងទៀត។")
 
@@ -215,5 +231,5 @@ def main():
     print("Video Cutter, Translator & Voice Bot is running...")
     app_bot.run_polling()
 
-if __name__ == '__main__':
+if __name__ == 'main__':
     main()
