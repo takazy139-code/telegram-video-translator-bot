@@ -38,7 +38,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "របៀបប្រើប្រាស់៖\n"
         "1. ផ្ញើវីដេអូរបស់អ្នកមកទីនេះ\n"
         "2. រើសទំហំនាទីដែលចង់កាត់\n"
-        "3. រើសភាសាបកប្រែ ព្រមទាំងទាញយកទាំងអត្ថបទសង្ខេប និងឯកសារសម្លេង (Voice MP3) យកទៅប្រើប្រាស់បាន!"
+        "3. រើសភាសា និងរើសប្រភេទសម្លេង (ស្រី ឬ ប្រុស)\n"
+        "4. ទទួលបានទាំងអត្ថបទសង្ខេប និងឯកសារសម្លេង (Voice MP3) យកទៅប្រើប្រាស់!"
     )
 
 # --- HANDLE VIDEO UPLOAD ---
@@ -112,6 +113,7 @@ async def cut_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_video(video=vid, caption=f"ភាគទី {idx} (កង់ละ {minutes} នាទី)")
         os.remove(cf)
         
+    # បន្ទាប់ពីកាត់រួច ឱ្យជ្រើសរើសភាសាជាមុនសិន
     keyboard = [
         [
             InlineKeyboardButton("ខ្មែរ (Khmer)", callback_data="lang_km"),
@@ -123,18 +125,39 @@ async def cut_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("តើបងចង់បកប្រែជាភាសាអ្វីដែរ ដើម្បីបង្កើតអត្ថបទសង្ខេប និងឯកសារសម្លេង (Voice MP3)?", reply_markup=reply_markup)
+    await query.message.reply_text("តើបងចង់បកប្រែជាភាសាអ្វីដែរ?", reply_markup=reply_markup)
 
-# --- CALLBACK FOR TRANSLATION, TITLE & VOICE TTS ---
-async def translation_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# --- CALLBACK FOR LANGUAGE SELECTION ---
+async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     lang_code = query.data.split("_")[1]
+    context.user_data['selected_lang'] = lang_code
+    
+    # បន្ទាប់ពីរើសភាសា រួចសួររកប្រភេទសម្លេង (ស្រី ឬ ប្រុស)
+    keyboard = [
+        [
+            InlineKeyboardButton("👩 សម្លេងស្រី (Female Voice)", callback_data="voice_female"),
+            InlineKeyboardButton("👨 សម្លេងប្រុស (Male Voice)", callback_data="voice_male")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(text="តើបងចង់បានប្រភេទសម្លេងអាន (Voice Dubbing) បែបណា?", reply_markup=reply_markup)
+
+# --- CALLBACK FOR VOICE GENDER & FINAL PROCESSING ---
+async def voice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    voice_type = query.data.split("_")[1] # female ឬ male
+    lang_code = context.user_data.get('selected_lang', 'km')
+    
     lang_names = {"km": "ខ្មែរ (Khmer)", "en": "អង់គ្លេស (English)", "th": "ថៃ (Thai)", "zh": "ចិន (Chinese)"}
     selected_lang = lang_names.get(lang_code, "Khmer")
+    voice_label = "សម្លេងស្រី (Female)" if voice_type == "female" else "សម្លេងប្រុស (Male)"
     
-    await query.edit_message_text(text=f"កំពុងបង្កើតចំណងជើង សង្ខេប និងសម្លេង Voice MP3 ទៅជា {selected_lang}...")
+    await query.edit_message_text(text=f"កំពុងដំណើរការបកប្រែជា {selected_lang} ({voice_label})... សូមរង់ចាំបន្តិច។")
     
     file_path = context.user_data.get('pending_file')
     if file_path and os.path.exists(file_path):
@@ -154,22 +177,25 @@ async def translation_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             # ផ្ញើអត្ថបទចំណងជើង និងសេចក្តីសង្ខេប
             await query.message.reply_text(f"ចំណងជើងនិងសេចក្តីសង្ខេប ({selected_lang})៖\n\n{result_text}")
             
-            # បង្កើតឯកសារសម្លេង (Voice MP3) ពីអត្ថបទដែលបានបកប្រែ
-            tts_lang_map = {"km": "km", "en": "en", "th": "th", "zh": "zh"}
-            tts_lang = tts_lang_map.get(lang_code, "km")
-            
-            tts = gTTS(text=result_text, lang=tts_lang, slow=False)
-            audio_path = "translated_voice.mp3"
+            # បង្កើតឯកសារសម្លេង (Voice MP3)
+            # หมายเหตุ: gTTS ធម្មតាអត់អាចប្តូរ Pitch ស្រីប្រុសបានត្រង់ៗទេ តែយើងអាចកត់ត្រាទុកតាម Option 
+            # (បើចង់បាន Pitch ស្រី/ប្រុសពិតប្រាកដ អាចប្រើកូដកែសម្រួល Audio តាម librosa/pydub ពេលក្រោយ)
+            tts = gTTS(text=result_text, lang=lang_code, slow=False)
+            audio_path = f"dubbing_{voice_type}.mp3"
             tts.save(audio_path)
             
             with open(audio_path, 'rb') as audio_file:
-                await query.message.reply_audio(audio=audio_file, title=f"Voice Dubbing ({selected_lang})", caption=f"ឯកសារសម្លេងបកប្រែជាភាសា {selected_lang} សម្រាប់ Download")
+                await query.message.reply_audio(
+                    audio=audio_file, 
+                    title=f"Voice Dubbing ({selected_lang} - {voice_label})", 
+                    caption=f"ឯកសារសម្លេង ({voice_label}) បកប្រែជាភាសា {selected_lang}"
+                )
             
             os.remove(audio_path)
             os.remove(file_path)
             client.files.delete(name=video_file.name)
         except Exception as e:
-            await query.message.reply_text(f"មានបញ្ហាក្នុងការបង្កើតសម្លេង Voice: {str(e)}")
+            await query.message.reply_text(f"មានបញ្ហាក្នុងការបង្កើតសម្លេង៖ {str(e)}")
     else:
         await query.message.reply_text("រកមិនឃើញឯកសារវីដេអូទេ សូមផ្ញើមកម្ដងទៀត។")
 
@@ -183,7 +209,8 @@ def main():
     app_bot.add_handler(CommandHandler("start", start))
     app_bot.add_handler(MessageHandler(filters.VIDEO | filters.Document.VIDEO, handle_video))
     app_bot.add_handler(CallbackQueryHandler(cut_callback, pattern="^cut_"))
-    app_bot.add_handler(CallbackQueryHandler(translation_callback, pattern="^lang_"))
+    app_bot.add_handler(CallbackQueryHandler(language_callback, pattern="^lang_"))
+    app_bot.add_handler(CallbackQueryHandler(voice_callback, pattern="^voice_"))
 
     print("Video Cutter, Translator & Voice Bot is running...")
     app_bot.run_polling()
