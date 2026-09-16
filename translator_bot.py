@@ -27,7 +27,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Telegram Multipurpose Translator Bot is running successfully!"
+    return "Telegram Multi-Language Translator Bot is running successfully!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
@@ -36,19 +36,19 @@ def run_flask():
 # Command /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
-        "🎬 **ស្វាគមន៍មកកាន់ Translator & Voice Bot!**\n\n"
+        "🌍 **ស្វាគមន៍មកកាន់ Multi-Language Translator & Voice Bot!**\n\n"
         "វិធីប្រើប្រាស់៖\n"
-        "1. ផ្ញើអត្ថបទ (Text) ឬចំណងជើងដែលចង់បកប្រែមកទីនេះ\n"
-        "2. ជ្រើសរើសភាសា (ខ្មែរ ឬ អង់គ្លេស)\n"
+        "1. ផ្ញើអត្ថបទ (Text) ដែលចង់បកប្រែមកទីនេះ\n"
+        "2. ជ្រើសរើសភាសា (ខ្មែរ, អង់គ្លេស, ឬ ថៃ)\n"
         "3. ជ្រើសរើសប្រភេទសំឡេង (ស្រី ឬ ប្រុស)\n"
         "4. ទទួលបានអត្ថបទបកប្រែ និងឯកសារសម្លេង (Voice MP3) ភ្លាមៗតែម្ដង!"
     )
     await update.message.reply_text(welcome_text, parse_mode="Markdown")
 
-# ទទួលវីដេអូ (ឆ្លើយតបណែនាំភ្លាមៗ មិនឱ្យស្ងាត់)
+# ទទួលវីដេអូ (ឆ្លើយតបណែនាំ)
 async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🎬 បងបានផ្ញើវីដេអូមក! ដើម្បីជៀសវាងការគាំង Error លើ Server សូមបង **Copy អត្ថបទ ឬសាច់រឿងក្នុងវីដេអូនោះ ផ្ញើមកកាន់ខ្ញុំ (Text)** វិញ បន្ទាប់មកខ្ញុំនឹងបកប្រែជាសំឡេង Voice MP3 ជូនភ្លាមៗយ៉ាងរលូនបង!"
+        "🎬 បងបានផ្ញើវីដេអូមក! ដើម្បីជៀសវាងការគាំង Error សូមបង **Copy អត្ថបទ ឬសាច់រឿងក្នុងវីដេអូនោះ ផ្ញើមកកាន់ខ្ញុំ (Text)** វិញ បន្ទាប់មកខ្ញុំនឹងបកប្រែជាសំឡេង Voice MP3 ជូនភ្លាមៗយ៉ាងរលូនបង!"
     )
 
 # ទទួលអត្ថបទពីអ្នកប្រើប្រាស់
@@ -63,7 +63,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
         [InlineKeyboardButton("🇰🇭 ភាសាខ្មែរ (Khmer)", callback_data="lang_km")],
-        [InlineKeyboardButton("🇺🇸 ភាសាអង់គ្លេស (English)", callback_data="lang_en")]
+        [InlineKeyboardButton("🇺🇸 ភាសាអង់គ្លេស (English)", callback_data="lang_en")],
+        [InlineKeyboardButton("🇹🇭 ភាសាថៃ (Thai)", callback_data="lang_th")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await message.reply_text("🌐 សូមជ្រើសរើសភាសាដែលចង់បកប្រែ៖", reply_markup=reply_markup)
@@ -73,9 +74,17 @@ async def select_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    lang_choice = query.data.split("_")[1]
-    context.user_data['lang_code'] = "km" if lang_choice == "km" else "en"
-    context.user_data['selected_lang'] = "ភាសាខ្មែរ" if lang_choice == "km" else "English"
+    lang_choice = query.data.split("_")[1] # km, en, th
+    
+    if lang_choice == "km":
+        context.user_data['lang_code'] = "km"
+        context.user_data['selected_lang'] = "ភាសាខ្មែរ"
+    elif lang_choice == "en":
+        context.user_data['lang_code'] = "en"
+        context.user_data['selected_lang'] = "English"
+    elif lang_choice == "th":
+        context.user_data['lang_code'] = "th"
+        context.user_data['selected_lang'] = "ភាសាថៃ (Thai)"
 
     keyboard = [
         [InlineKeyboardButton("👩 សំឡេងស្រី (Female Voice)", callback_data="voice_female")],
@@ -101,17 +110,20 @@ async def select_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     audio_path = None
 
     try:
-        prompt = f"Translate the following text into {selected_lang} accurately and naturally for a voiceover:\n\n{input_text}"
+        # ១. ប្រើប្រាស់ Gemini 1.5 Flash ដើម្បីបកប្រែអត្ថបទ
+        prompt = f"Translate the following text into {selected_lang} accurately and naturally for a voiceover script:\n\n{input_text}"
         response = ai_client.models.generate_content(
             model='gemini-1.5-flash',
             contents=prompt
         )
         translated_text = response.text
 
+        # ២. បង្កើតឯកសារសម្លេង gTTS (ការពារ Error ភាសាថៃ)
         audio_path = f"translation_{voice_type}.mp3"
         tts = gTTS(text=translated_text, lang=lang_code, slow=False)
         tts.save(audio_path)
 
+        # ៣. ផ្ញើអត្ថបទបកប្រែ និងឯកសារសម្លេង (Voice MP3) ទៅ Telegram User
         await query.message.reply_text(f"📝 **អត្ថបទបកប្រែជា ({selected_lang})៖**\n\n{translated_text}")
         
         with open(audio_path, 'rb') as audio_file:
@@ -122,10 +134,11 @@ async def select_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
     except Exception as e:
-        logger.error(f"Error in text translation: {e}")
-        await query.message.reply_text("❌ មានបញ្ហាក្នុងការបកប្រែអត្ថបទ សូមព្យាយាមម្តងទៀត!")
+        logger.error(f"Error in translation/TTS for lang {lang_code}: {e}")
+        await query.message.reply_text("❌ មានបញ្ហាក្នុងការបកប្រែ ឬបង្កើតសម្លេង (អាចបណ្តាលមកពីទម្រង់អត្ថបទភាសាថៃ) សូមព្យាយាមម្តងទៀត!")
 
     finally:
+        # សម្អាត File ออกจาก Server
         if audio_path and os.path.exists(audio_path):
             os.remove(audio_path)
 
@@ -141,7 +154,7 @@ def main():
     application.add_handler(CallbackQueryHandler(select_language, pattern="^lang_"))
     application.add_handler(CallbackQueryHandler(select_voice, pattern="^voice_"))
 
-    print("Bot is starting with Multipurpose support...")
+    print("Bot is starting with Multi-Language Thai support...")
     application.run_polling()
 
 if __name__ == "__main__":
