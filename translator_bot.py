@@ -1,235 +1,158 @@
 import os
 import logging
-import subprocess
-from google import genai
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 from flask import Flask
-from multiprocessing import Process
+from threading import Thread
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from google import genai
 from gtts import gTTS
-from pydub import AudioSegment
 
-# --- FLASK WEB SERVER ---
+# កំណត់ Logging
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# ទាញយក Token ពី Environment Variables
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+
+# ផ្ទៀងផ្ទាត់ API Keys
+if not TELEGRAM_BOT_TOKEN:
+    raise ValueError("សូមកំណត់ TELEGRAM_BOT_TOKEN ក្នុង Environment Variables!")
+if not GEMINI_API_KEY:
+    raise ValueError("សូមកំណត់ GEMINI_API_KEY ក្នុង Environment Variables!")
+
+# ផ្ដើមដំណើរការ Google GenAI Client
+ai_client = genai.Client(api_key=GEMINI_API_KEY)
+
+# Flask Server សម្រាប់រក្សា Render ឱ្យដំណើរការ 24/7
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Video Cutter, Translator & Voice Bot is running 24/7"
+    return "Telegram Video Translator & Voice Bot is running successfully!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
-# --- CONFIGURATIONS ---
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-
-if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY:
-    raise ValueError("សូមកំណត់ TELEGRAM_BOT_TOKEN និង GEMINI_API_KEY ជាមុនសិន!")
-
-client = genai.Client(api_key=GEMINI_API_KEY)
-
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# --- /start COMMAND ---
+# Command /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "សួស្តី! ខ្ញុំជា Video Cutter, Translator & Voice Bot\n\n"
-        "របៀបប្រើប្រាស់៖\n"
-        "1. ផ្ញើវីដេអូរបស់អ្នកមកទីនេះ\n"
-        "2. រើសទំហំនាទីដែលចង់កាត់\n"
-        "3. រើសភាសា និងរើសប្រភេទសម្លេង (ស្រី ឬ ប្រុស)\n"
-        "4. ទទួលបានទាំងអត្ថបទសង្ខេប និងឯកសារសម្លេង (Voice MP3) យកទៅប្រើប្រាស់!"
+    welcome_text = (
+        "ស្វាគមន៍! ខ្ញុំជា Video Cutter, Translator & Voice Bot\n\n"
+        "វិធីប្រើប្រាស់៖\n"
+        "1. ផ្ញើវីដេអូមកទីនេះ\n"
+        "2. ជ្រើសរើសភាសា និងសំឡេង (ស្រី ឬ ប្រុស)\n"
+        "3. ទទួលបានអត្ថបទបកប្រែ និងឯកសារសម្លេង (Voice MP3) យកទៅប្រើប្រាស់!"
     )
+    await update.message.reply_text(welcome_text)
 
-# --- HANDLE VIDEO UPLOAD ---
+# ទទួលវីដេអូ ឬឯកសារ
 async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.message
-    if message.video or message.document:
-        status_msg = await message.reply_text("កំពុងទាញយកវីដេអូរបស់អ្នក សូមរង់ចាំបន្តិច...")
-        
-        file = await (message.video.get_file() if message.video else message.document.get_file())
-        input_path = "downloads_input.mp4"
-        os.makedirs("downloads", exist_ok=True)
-        await file.download_to_drive(input_path)
-        
-        context.user_data['pending_file'] = input_path
-        await status_msg.delete()
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("⏱️ ៥ នាទី/កង់", callback_data="cut_5"),
-                InlineKeyboardButton("⏱️ ១០ នាទី/កង់", callback_data="cut_10")
-            ],
-            [
-                InlineKeyboardButton("⏱️ ១៥ នាទី/កង់", callback_data="cut_15"),
-                InlineKeyboardButton("⏱️ ២០ នាទី/កង់", callback_data="cut_20")
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await message.reply_text("តើបងចង់កាត់វីដេអូនេះក្នុងទំហំប៉ុន្មាននាទីក្នុងមួយកង់?", reply_markup=reply_markup)
-    else:
-        await message.reply_text("សូមផ្ញើឯកសារវីដេអូមកកាន់ Bot នេះ។")
-
-# --- CALLBACK FOR CUTTING MINUTES ---
-async def cut_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    message = update.message or update.callback_query.message
+    video = update.message.video if update.message else None
     
-    minutes = int(query.data.split("_")[1])
-    chunk_seconds = minutes * 60
-    
-    await query.edit_message_text(text=f"កំពុងកាត់វីដេអូជាកង់ៗ (កង់ละ {minutes} នាទី)... សូមរង់ចាំបន្តិច។")
-    
-    input_path = context.user_data.get('pending_file')
-    if not input_path or not os.path.exists(input_path):
-        await query.message.reply_text("រកមិនឃើញឯកសារវីដេអូទេ សូមផ្ញើមកម្ដងទៀត។")
+    if not video:
+        await message.reply_text("សូមផ្ញើមកជារូបភាពវីដេអូ (Video) មកកាន់ខ្ញុំ!")
         return
-        
-    cmd_probe = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {input_path}"
+
+    # ទាញយកវីដេអូទុកក្នុង Temporary
+    video_file = await context.bot.get_file(video.file_id)
+    file_path = f"downloaded_{video.file_id}.mp4"
+    await video_file.download_to_drive(file_path)
+    
+    # រក្សាទុក file_path ក្នុង context.user_data សម្រាប់ជំហានបន្ទាប់
+    context.user_data['video_file_path'] = file_path
+
+    # បង្ហាញប៊ូតុងជ្រើសរើសភាសា
+    keyboard = [
+        [InlineKeyboardButton("🇰🇭 ភាសាខ្មែរ (Khmer)", callback_data="lang_km")],
+        [InlineKeyboardButton("🇺🇸 ភាសាអង់គ្លេស (English)", callback_data="lang_en")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await message.reply_text("សូមជ្រើសរើសភាសាដែលចต้องการបកប្រែ៖", reply_markup=reply_markup)
+
+# កត់ត្រាភាសា និងបង្ហាញប៊ូតុងរើសសំឡេង (ស្រី ឬ ប្រុស)
+async def select_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    lang_choice = query.data.split("_")[1]
+    context.user_data['lang_code'] = "km" if lang_choice == "km" else "en"
+    context.user_data['selected_lang'] = "ភាសាខ្មែរ" if lang_choice == "km" else "English"
+
+    keyboard = [
+        [InlineKeyboardButton("👩 សំឡេងស្រី (Female Voice)", callback_data="voice_female")],
+        [InlineKeyboardButton("👨 សំឡេងប្រុស (Male Voice)", callback_data="voice_male")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text("សូមជ្រើសរើសប្រភេទសំឡេង (Voice Type)៖", reply_markup=reply_markup)
+
+# បង្កើតការបកប្រែ និងសម្លេង (Voice MP3)
+async def select_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    voice_type = query.data.split("_")[1]
+    voice_label = "សំឡេងស្រី" if voice_type == "female" else "សំឡេងប្រុស"
+    
+    lang_code = context.user_data.get('lang_code', 'km')
+    selected_lang = context.user_data.get('selected_lang', 'ភាសាខ្មែរ')
+    file_path = context.user_data.get('video_file_path')
+
+    await query.message.edit_text("⏳ កំពុងដំណើរការបកប្រែ និងបង្កើតសម្លេង Voice MP3 ជូនបង... រង់ចាំបន្តិច!")
+
     try:
-        duration = float(subprocess.check_output(cmd_probe, shell=True).decode().strip())
-    except Exception:
-        duration = 600
-        
-    os.makedirs("chunks", exist_ok=True)
-    start_time = 0
-    part = 1
-    chunk_files = []
-    
-    while start_time < duration:
-        output_file = f"chunks/part_{part}.mp4"
-        cmd = f"ffmpeg -y -ss {start_time} -i {input_path} -t {chunk_seconds} -c copy {output_file}"
-        subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
-            chunk_files.append(output_file)
-        start_time += chunk_seconds
-        part += 1
-        
-    await query.message.reply_text(f"កាត់វីដេអូរួចរាល់បានចំនួន {len(chunk_files)} កង់! កំពុងផ្ញើជូន...")
-    
-    for idx, cf in enumerate(chunk_files, 1):
-        with open(cf, 'rb') as vid:
-            await query.message.reply_video(video=vid, caption=f"ភាគទី {idx} (កង់ละ {minutes} នាទី)")
-        os.remove(cf)
-        
-    # បន្ទាប់ពីកាត់រួច ឱ្យជ្រើសរើសភាសាជាមុនសិន
-    keyboard = [
-        [
-            InlineKeyboardButton("ខ្មែរ (Khmer)", callback_data="lang_km"),
-            InlineKeyboardButton("អង់គ្លេស (English)", callback_data="lang_en")
-        ],
-        [
-            InlineKeyboardButton("ថៃ (Thai)", callback_data="lang_th"),
-            InlineKeyboardButton("ចិន (Chinese)", callback_data="lang_zh")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("តើបងចង់បកប្រែជាភាសាអ្វីដែរ?", reply_markup=reply_markup)
+        # បង្ហោះវីដេអូទៅ Gemini សម្រាប់ការបកប្រែ
+        with open(file_path, "rb") as f:
+            video_uploaded = ai_client.files.upload(file=f)
 
-# --- CALLBACK FOR LANGUAGE SELECTION ---
-async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    lang_code = query.data.split("_")[1]
-    context.user_data['selected_lang'] = lang_code
-    
-    # បន្ទាប់ពីរើសភាសា រួចសួររកប្រភេទសម្លេង (ស្រី ឬ ប្រុស)
-    keyboard = [
-        [
-            InlineKeyboardButton("👩 សម្លេងស្រី (Female Voice)", callback_data="voice_female"),
-            InlineKeyboardButton("👨 សម្លេងប្រុស (Male Voice)", callback_data="voice_male")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(text="តើបងចង់បានប្រភេទសម្លេងអាន (Voice Dubbing) បែបណា?", reply_markup=reply_markup)
+        prompt = f"Translate the core content of this video into {selected_lang} in detail as a clear summary script."
+        response = ai_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[video_uploaded, prompt]
+        )
+        result_text = response.text
 
-# --- CALLBACK FOR VOICE GENDER & FINAL PROCESSING ---
-async def voice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    voice_type = query.data.split("_")[1] # female ឬ male
-    lang_code = context.user_data.get('selected_lang', 'km')
-    
-    lang_names = {"km": "ខ្មែរ (Khmer)", "en": "អង់គ្លេស (English)", "th": "ថៃ (Thai)", "zh": "ចិន (Chinese)"}
-    selected_lang = lang_names.get(lang_code, "Khmer")
-    voice_label = "សម្លេងស្រី (Female)" if voice_type == "female" else "សម្លេងប្រុស (Male)"
-    
-    await query.edit_message_text(text=f"កំពុងដំណើរការបកប្រែជា {selected_lang} ({voice_label})... សូមរង់ចាំបន្តិច។")
-    
-    file_path = context.user_data.get('pending_file')
-    if file_path and os.path.exists(file_path):
-        try:
-            video_file = client.files.upload(file=file_path)
-            prompt = f"Listen to the audio, transcribe, and translate the core content into fluent {selected_lang}. Provide a single unified Title for the whole story, followed by a clear and structured summary. Do not include any hashtags."
-            
-            response = client.models.generate_content(
-                model='gemini-3.6-flash',
-                contents=[video_file, prompt]
+        # បង្កើតឯកសារសម្លេង (Voice MP3) ជាមួយ gTTS ស្តង់ដារ
+        audio_path = f"dubbing_{voice_type}.mp3"
+        tts = gTTS(text=result_text, lang=lang_code, slow=False)
+        tts.save(audio_path)
+
+        # ផ្ញើលទ្ធផលទៅ Telegram User
+        await query.message.reply_text(f"📝 **លទ្ធផលបកប្រែ ({selected_lang})៖**\n\n{result_text}")
+        
+        with open(audio_path, 'rb') as audio_file:
+            await query.message.reply_audio(
+                audio=audio_file, 
+                title=f"Voice Dubbing ({selected_lang} - {voice_label})", 
+                caption=f"ឯកសារសម្លេង ({voice_label}) បកប្រែជា {selected_lang}"
             )
-            
-            result_text = response.text
-            if len(result_text) > 4000:
-                result_text = result_text[:4000] + "..."
-                
-            # ផ្ញើអត្ថបទចំណងជើង និងសេចក្តីសង្ខេប
-            await query.message.reply_text(f"ចំណងជើងនិងសេចក្តីសង្ខេប ({selected_lang})៖\n\n{result_text}")
-            
-            # បង្កើតឯកសារសម្លេង (Voice MP3)
-            raw_audio_path = "raw_output.mp3"
-            final_audio_path = f"dubbing_{voice_type}.mp3"
-            
-            tts = gTTS(text=result_text, lang=lang_code, slow=False)
-            tts.save(raw_audio_path)
-            
-            # ប្រសិនបើជ្រើសរើសសំឡេងប្រុស យើងកែ Pitch ឱ្យទាប និងក្រាស់ជាងមុន
-            if voice_type == "male":
-                sound = AudioSegment.from_mp3(raw_audio_path)
-                # ផ្លាស់ប្តូរ Sample Rate ដើម្បីបញ្ចុះ Pitch ឱ្យទៅជាធ្ងន់បែបប្រុស
-                new_sample_rate = int(sound.frame_rate * 0.82) # បន្ថយប្រហែល 18% ឱ្យសំឡេងធ្ងន់ក្រាស់
-                male_sound = sound._spawn(sound.raw_data, overrides={'frame_rate': new_sample_rate})
-                male_sound = male_sound.set_frame_rate(44100)
-                male_sound.export(final_audio_path, format="mp3")
-            else:
-                # សំឡេងស្រីរក្សាទុកទម្រង់ដើម
-                os.rename(raw_audio_path, final_audio_path)
-                
-            if os.path.exists(raw_audio_path):
-                os.remove(raw_audio_path)
-            
-            with open(final_audio_path, 'rb') as audio_file:
-                await query.message.reply_audio(
-                    audio=audio_file, 
-                    title=f"Voice Dubbing ({selected_lang} - {voice_label})", 
-                    caption=f"ឯកសារសម្លេង ({voice_label}) បកប្រែជាភាសា {selected_lang}"
-                )
-            
-            os.remove(final_audio_path)
+
+        # សម្អាត File ក្នុង Server
+        os.remove(audio_path)
+        if file_path and os.path.exists(file_path):
             os.remove(file_path)
-            client.files.delete(name=video_file.name)
-        except Exception as e:
-            await query.message.reply_text(f"មានបញ្ហាក្នុងการបង្កើតសម្លេង៖ {str(e)}")
-    else:
-        await query.message.reply_text("រកមិនឃើញឯកសារវីដេអូទេ សូមផ្ញើមកម្ដងទៀត។")
+        ai_client.files.delete(name=video_uploaded.name)
 
-# --- MAIN FUNCTION ---
+    except Exception as e:
+        logger.error(f"Error processing video: {e}")
+        await query.message.reply_text("❌ មានបញ្តហាក្នុងការច្នៃវីដេអូ សូមព្យាយាមម្តងទៀត!")
+
 def main():
-    p = Process(target=run_flask)
-    p.start()
+    # ចាប់ផ្តើម Flask Server ក្នុង Background Thread
+    t = Thread(target=run_flask)
+    t.start()
 
-    app_bot = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    # ចាប់ផ្តើម Telegram Bot Application
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    app_bot.add_handler(CommandHandler("start", start))
-    app_bot.add_handler(MessageHandler(filters.VIDEO | filters.Document.VIDEO, handle_video))
-    app_bot.add_handler(CallbackQueryHandler(cut_callback, pattern="^cut_"))
-    app_bot.add_handler(CallbackQueryHandler(language_callback, pattern="^lang_"))
-    app_bot.add_handler(CallbackQueryHandler(voice_callback, pattern="^voice_"))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.VIDEO | filters.Document.VIDEO, handle_video))
+    application.add_handler(CallbackQueryHandler(select_language, pattern="^lang_"))
+    application.add_handler(CallbackQueryHandler(select_voice, pattern="^voice_"))
 
-    print("Video Cutter, Translator & Voice Bot is running...")
-    app_bot.run_polling()
+    print("Bot is starting...")
+    application.run_polling()
 
-if __name__ == 'main__':
+if __name__ == "__main__":
     main()
