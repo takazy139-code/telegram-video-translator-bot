@@ -6,7 +6,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from google import genai
 from gtts import gTTS
-from moviepy.editor import VideoFileClip, AudioFileClip
+from moviepy.video.io.VideoFileClip import VideoFileClip
+from moviepy.audio.io.AudioFileClip import AudioFileClip
 
 # កំណត់ Logging
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -56,14 +57,12 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text("សូមផ្ញើមកជារូបភាពវីដេអូ (Video) មកកាន់ខ្ញុំ!")
         return
 
-    # ទាញយកវីដេអូទុកក្នុង Temporary
     video_file = await context.bot.get_file(video.file_id)
     file_path = f"downloaded_{video.file_id}.mp4"
     await video_file.download_to_drive(file_path)
     
     context.user_data['video_file_path'] = file_path
 
-    # បង្ហាញប៊ូតុងជ្រើសរើសភាសា
     keyboard = [
         [InlineKeyboardButton("🇰🇭 ភាសាខ្មែរ (Khmer)", callback_data="lang_km")],
         [InlineKeyboardButton("🇺🇸 ភាសាអង់គ្លេស (English)", callback_data="lang_en")]
@@ -71,7 +70,7 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await message.reply_text("🌐 សូមជ្រើសរើសភាសាដែលចង់បកប្រែ៖", reply_markup=reply_markup)
 
-# កត់ត្រាភាសា និងបង្ហាញប៊ូតុងរើសសំឡេង (ស្រី ឬ ប្រុស)
+# កត់ត្រាភាសា និងបង្ហាញប៊ូតុងរើសសំឡេង
 async def select_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -87,7 +86,7 @@ async def select_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.edit_text("🗣️ សូមជ្រើសរើសប្រភេទសំឡេង (Voice Type)៖", reply_markup=reply_markup)
 
-# បង្កើតການបកប្រែ បញ្ចូលសំឡេង និងផ្ញើវីដេអូថ្មីត្រឡប់ទៅវិញ
+# បង្កើតការបកប្រែ និងបញ្ចូលសំឡេង
 async def select_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -106,7 +105,6 @@ async def select_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     output_video_path = None
 
     try:
-        # ១. បង្ហោះវីដេអូទៅ Gemini ដើម្បីសង្ខេបនិងបកប្រែអត្ថបទ
         with open(file_path, "rb") as f:
             video_uploaded = ai_client.files.upload(file=f)
 
@@ -117,37 +115,28 @@ async def select_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         result_text = response.text
 
-        # ២. បង្កើតឯកសារសម្លេង gTTS
         audio_path = f"dubbing_{voice_type}.mp3"
         tts = gTTS(text=result_text, lang=lang_code, slow=False)
         tts.save(audio_path)
 
-        # ៣. ប្រើ MoviePy ដើម្បីដកសំឡេងដើមចេញ និងបញ្ចូលសំឡេងបកប្រែថ្មី
         output_video_path = f"dubbed_output_{voice_type}.mp4"
         
         video_clip = VideoFileClip(file_path)
         audio_clip = AudioFileClip(audio_path)
 
-        # កំណត់រយៈពេលវីដេអូឱ្យត្រូវ ឬប្រសិនសម្លេងវែងជាងវីដេអូ អាចទុកតាមសម្លេង ឬកាត់តាមវីដេអូ
-        # ទីនេះយើងយកសំឡេងថ្មីមកដាក់ជំនួសសំឡេងដើម
         final_video = video_clip.set_audio(audio_clip)
         
-        # Write វីដេអូថ្មីចេញមក
         final_video.write_videofile(
             output_video_path, 
             codec='libx264', 
             audio_codec='aac', 
-            fps=video_clip.fps if video_clip.fps else 24,
-            preset='ultrafast',
-            logger=None
+            fps=video_clip.fps if video_clip.fps else 24
         )
 
-        # បិទ Clips ទាំងអស់ដើម្បីលុប Cache
         video_clip.close()
         audio_clip.close()
         final_video.close()
 
-        # ៤. ផ្ញើវីដេអូដែលបានបញ្ចូលសំឡេងរួចទៅ Telegram User
         await query.message.reply_text(f"✅ **ការបកប្រែសម្រេចជោគជ័យ ({selected_lang} - {voice_label})!**")
         
         with open(output_video_path, 'rb') as vid_file:
@@ -158,10 +147,9 @@ async def select_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.error(f"Error in video dubbing: {e}")
-        await query.message.reply_text("❌ មានបញ្ហាក្នុងការកែច្នៃវីដេអូ សូមព្យាយាមផ្ញើរវីដេអូថ្មីម្តងទៀត!")
+        await query.message.reply_text("❌ មានបញ្ហាក្នុងการកែច្នៃវីដេអូ សូមព្យាយាមផ្ញើរវីដេអូថ្មីម្តងទៀត!")
 
     finally:
-        # សម្អាត File ទាំងអស់ចេញពី Server ដើម្បីកុំឱ្យធ្ងន់ Disk
         if file_path and os.path.exists(file_path):
             os.remove(file_path)
         if audio_path and os.path.exists(audio_path):
@@ -175,11 +163,9 @@ async def select_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
 
 def main():
-    # ចាប់ផ្តើម Flask Server ក្នុង Background Thread
     t = Thread(target=run_flask)
     t.start()
 
-    # ចាប់ផ្តើម Telegram Bot Application
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
