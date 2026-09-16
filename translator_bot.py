@@ -20,7 +20,6 @@ if not TELEGRAM_BOT_TOKEN:
 if not GEMINI_API_KEY:
     raise ValueError("សូមកំណត់ GEMINI_API_KEY ក្នុង Environment Variables!")
 
-# ផ្ដើមដំណើរការ Google GenAI Client
 ai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 # Flask Server សម្រាប់រក្សា Render ឱ្យដំណើរការ 24/7
@@ -28,7 +27,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Telegram Video Translator & Voice Bot is running successfully!"
+    return "Telegram Multi-Part Video Translator Bot is running successfully!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
@@ -37,12 +36,12 @@ def run_flask():
 # Command /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
-        "🎬 **ស្វាគមន៍មកកាន់ Video Translator & Voice Bot!**\n\n"
+        "🎬 **ស្វាគមន៍មកកាន់ Multi-Part Video Translator Bot!**\n\n"
         "វិធីប្រើប្រាស់៖\n"
-        "1. ផ្ញើវីដេអូមកទីនេះ\n"
+        "1. ផ្ញើវីដេអូមកទីនេះ (ទោះបីជាវីដេអូវែង ក៏ Bot ចែកជាកំណាត់ៗស្វ័យប្រវត្តិ)\n"
         "2. ជ្រើសរើសភាសា (ខ្មែរ ឬ អង់គ្លេស)\n"
         "3. ជ្រើសរើសប្រភេទសំឡេង (ស្រី ឬ ប្រុស)\n"
-        "4. ទទួលបានអត្ថបទបកប្រែ និងឯកសារសម្លេង (Voice MP3) យកទៅប្រើប្រាស់ភ្លាមៗ!"
+        "4. ទទួលបានអត្ថបទ និងឯកសារសម្លេង (Voice MP3) បែងចែកជា Parts យ៉ាងស្អាត!"
     )
     await update.message.reply_text(welcome_text, parse_mode="Markdown")
 
@@ -84,7 +83,7 @@ async def select_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.edit_text("🗣️ សូមជ្រើសរើសប្រភេទសំឡេង (Voice Type)៖", reply_markup=reply_markup)
 
-# បង្កើតការបកប្រែ និងផ្ញើអត្ថបទព្រមទាំងសម្លេង MP3
+# បែងចែកសាច់រឿងជាកំណាត់ៗ និងបង្កើតສម្លេង MP3 ជូនតាម Part នីមួយៗ
 async def select_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -96,48 +95,76 @@ async def select_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     selected_lang = context.user_data.get('selected_lang', 'ភាសាខ្មែរ')
     file_path = context.user_data.get('video_file_path')
 
-    await query.message.edit_text("⏳ កំពុងបកប្រែវីដេអូ និងបង្កើតឯកសារសម្លេង Voice MP3 ជូនបង... រង់ចាំបន្តិចបង!")
+    await query.message.edit_text("⏳ កំពុងវិភាគ និងបែងចែកវីដេអូជាកំណាត់ៗ (Parts) พร้อมបង្កើតសំឡេង... រង់ចាំបន្តិចបង!")
 
     video_uploaded = None
-    audio_path = None
+    audio_files = []
 
     try:
-        # ១. បង្ហោះវីដេអូទៅ Gemini សម្រាប់ការបកប្រែ
+        # ១. Upload វីដេអូទៅ Gemini
         with open(file_path, "rb") as f:
             video_uploaded = ai_client.files.upload(file=f)
 
-        prompt = f"Summarize and translate the core content of this video into {selected_lang} in detail as a clear voiceover script."
+        # ឱ្យ Gemini បែងចែកជាផ្នែកៗ (Parts) យ៉ាងច្បាស់លាស់
+        prompt = (
+            f"Analyze this video and break down the translation and summary into 3 clear chronological parts "
+            f"(Part 1, Part 2, Part 3) in {selected_lang}. "
+            f"Format each part clearly starting with 'PART 1:', 'PART 2:', and 'PART 3:'."
+        )
+        
         response = ai_client.models.generate_content(
             model='gemini-2.5-flash',
             contents=[video_uploaded, prompt]
         )
-        result_text = response.text
+        full_text = response.text
 
-        # ២. បង្កើតឯកសារសម្លេង gTTS
-        audio_path = f"dubbing_{voice_type}.mp3"
-        tts = gTTS(text=result_text, lang=lang_code, slow=False)
-        tts.save(audio_path)
+        # ផ្ញើអត្ថបទសរុបជូនបងជាមុនសិន
+        await query.message.reply_text(f"📝 **អត្ថបទបកប្រែបែងចែកជាកំណាត់ៗ ({selected_lang})៖**\n\n{full_text}")
 
-        # ៣. ផ្ញើអត្ថបទ និងឯកសារសម្លេង (Voice MP3) ទៅ Telegram User
-        await query.message.reply_text(f"📝 **អត្ថបទបកប្រែ ({selected_lang})៖**\n\n{result_text}")
-        
-        with open(audio_path, 'rb') as audio_file:
-            await query.message.reply_audio(
-                audio=audio_file,
-                title=f"Voiceover ({selected_lang} - {voice_label})",
-                caption=f"🎙️ ឯកសារសម្លេង ({voice_label}) សម្រាប់យកទៅប្រើប្រាស់ជាមួយវីដេអូ!"
-            )
+        # កាត់ចែកអត្ថបទតាម Part 1, Part 2, Part 3 ដើម្បីបង្កើតជា Voice MP3 ដាច់ដោយឡែកពីគ្នា
+        parts = []
+        if "PART 2" in full_text:
+            # បើមានចែកជា Parts ស្រាប់
+            raw_parts = full_text.split("PART ")
+            for p in raw_parts:
+                if p.strip():
+                    parts.append("PART " + p.strip())
+        else:
+            # បើ Gemini មិនបានបែងចែក strict ទេ យើងចែកអត្ថបទជា ៣ កំណាត់ស្មើៗគ្នា
+            chunk_size = len(full_text) // 3
+            parts = [
+                "Part 1: " + full_text[:chunk_size],
+                "Part 2: " + full_text[chunk_size:chunk_size*2],
+                "Part 3: " + full_text[chunk_size*2:]
+            ]
+
+        # ២. បង្កើតឯកសារសម្លេង Voice MP3 តាមកំណាត់នីមួយៗ
+        for i, part_text in enumerate(parts[:3], start=1):
+            audio_path = f"part_{i}_{voice_type}.mp3"
+            tts = gTTS(text=part_text, lang=lang_code, slow=False)
+            tts.save(audio_path)
+            audio_files.append((audio_path, i))
+
+        # ៣. ផ្ញើឯកសារសម្លេង MP3 ជូនតាម Part នីមួយៗទៅ Telegram User
+        for audio_path, i in audio_files:
+            with open(audio_path, 'rb') as audio_file:
+                await query.message.reply_audio(
+                    audio=audio_file,
+                    title=f"Part {i} ({selected_lang} - {voice_label})",
+                    caption=f"🎙️ ឯកសារសម្លេង Part {i} ({voice_label})"
+                )
 
     except Exception as e:
-        logger.error(f"Error processing video translation: {e}")
-        await query.message.reply_text("❌ មានបញ្ហាក្នុងការបកប្រែ សូមព្យាយាមផ្ញើរវីដេអូថ្មីម្តងទៀត!")
+        logger.error(f"Error in multi-part processing: {e}")
+        await query.message.reply_text("❌ មានបញ្ហាកในการបកប្រែវីដេអូ សូមព្យាយាមផ្ញើរវីដេអូថ្មីម្តងទៀត!")
 
     finally:
-        # សម្អាត File ออกจาก Server
+        # សម្អាត File ទាំងអស់ចេញពី Server
         if file_path and os.path.exists(file_path):
             os.remove(file_path)
-        if audio_path and os.path.exists(audio_path):
-            os.remove(audio_path)
+        for audio_path, _ in audio_files:
+            if os.path.exists(audio_path):
+                os.remove(audio_path)
         if video_uploaded:
             try:
                 ai_client.files.delete(name=video_uploaded.name)
@@ -155,7 +182,7 @@ def main():
     application.add_handler(CallbackQueryHandler(select_language, pattern="^lang_"))
     application.add_handler(CallbackQueryHandler(select_voice, pattern="^voice_"))
 
-    print("Bot is starting with stable Voice & Text Translation support...")
+    print("Bot is starting with Multi-Part Video Translation support...")
     application.run_polling()
 
 if __name__ == "__main__":
