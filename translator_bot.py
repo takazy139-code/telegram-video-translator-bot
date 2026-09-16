@@ -1,5 +1,4 @@
 import os
-import time
 import logging
 from flask import Flask
 from threading import Thread
@@ -28,7 +27,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Telegram Stable Video Translator Bot is running successfully!"
+    return "Telegram Text-to-Speech Translator Bot is running successfully!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
@@ -37,29 +36,26 @@ def run_flask():
 # Command /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
-        "🎬 **ស្វាគមន៍មកកាន់ Stable Video Translator Bot!**\n\n"
+        "💬 **ស្វាគមន៍មកកាន់ Text-to-Speech Translator Bot!**\n\n"
         "វិធីប្រើប្រាស់៖\n"
-        "1. ផ្ញើវីដេអូមកទីនេះ\n"
+        "1. ផ្ញើអត្ថបទ ឬឃ្លាដែលចង់បកប្រែមកទីនេះ\n"
         "2. ជ្រើសរើសភាសា (ខ្មែរ ឬ អង់គ្លេស)\n"
         "3. ជ្រើសរើសប្រភេទសំឡេង (ស្រី ឬ ប្រុស)\n"
-        "4. ទទួលបានអត្ថបទបកប្រែ និងឯកសារសម្លេង (Voice MP3) យ៉ាងរលូន!"
+        "4. ទទួលបានអត្ថបទបកប្រែ និងឯកសារសម្លេង (Voice MP3) ភ្លាមៗតែម្ដង!"
     )
     await update.message.reply_text(welcome_text, parse_mode="Markdown")
 
-# ទទួលវីដេអូ
-async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ទទួលអត្ថបទពីអ្នកប្រើប្រាស់
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
-    video = message.video if message else None
+    user_text = message.text if message else None
     
-    if not video:
-        await message.reply_text("សូមផ្ញើមកជារូបភាពវីដេអូ (Video) មកកាន់ខ្ញុំ!")
+    if not user_text:
+        await message.reply_text("សូមផ្ញើមកជាអត្ថបទ (Text) មកកាន់ខ្ញុំ!")
         return
 
-    video_file = await context.bot.get_file(video.file_id)
-    file_path = f"downloaded_{video.file_id}.mp4"
-    await video_file.download_to_drive(file_path)
-    
-    context.user_data['video_file_path'] = file_path
+    # រក្សាទុកអត្ថបទក្នុង user_data
+    context.user_data['input_text'] = user_text
 
     keyboard = [
         [InlineKeyboardButton("🇰🇭 ភាសាខ្មែរ (Khmer)", callback_data="lang_km")],
@@ -84,7 +80,7 @@ async def select_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.edit_text("🗣️ សូមជ្រើសរើសប្រភេទសំឡេង (Voice Type)៖", reply_markup=reply_markup)
 
-# បង្កើតការបកប្រែ និងផ្ញើអត្ថបទព្រមទាំងសម្លេង MP3
+# បកប្រែអត្ថបទ និងបង្កើតឯកសារសម្លេង MP3
 async def select_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -94,58 +90,44 @@ async def select_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     lang_code = context.user_data.get('lang_code', 'km')
     selected_lang = context.user_data.get('selected_lang', 'ភាសាខ្មែរ')
-    file_path = context.user_data.get('video_file_path')
+    input_text = context.user_data.get('input_text', '')
 
-    await query.message.edit_text("⏳ កំពុង Upload និងបកប្រែវីដេអូ... រង់ចាំបន្តិចបង!")
+    await query.message.edit_text("⏳ កំពុងបកប្រែអត្ថបទ និងបង្កើតឯកសារសម្លេង... រង់ចាំបន្តិចបង!")
 
-    video_uploaded = None
     audio_path = None
 
     try:
-        # ១. Upload វីដេអូទៅ Gemini
-        with open(file_path, "rb") as f:
-            video_uploaded = ai_client.files.upload(file=f)
-
-        # រង់ចាំបន្តិច (3 វិនាទី) ដើម្បីឱ្យ Google Server រៀបចំឯកសារវីដេអូរួចរាល់
-        time.sleep(3)
-
-        prompt = f"Summarize and translate the core content of this video into {selected_lang} in detail as a clear voiceover script."
+        # ១. ប្រើប្រាស់ Gemini 1.5 Flash ដើម្បីបកប្រែអត្ថបទ
+        prompt = f"Translate the following text into {selected_lang} accurately and naturally for a voiceover:\n\n{input_text}"
         response = ai_client.models.generate_content(
             model='gemini-1.5-flash',
-            contents=[video_uploaded, prompt]
+            contents=prompt
         )
-        result_text = response.text
+        translated_text = response.text
 
         # ២. បង្កើតឯកសារសម្លេង gTTS
-        audio_path = f"dubbing_{voice_type}.mp3"
-        tts = gTTS(text=result_text, lang=lang_code, slow=False)
+        audio_path = f"translation_{voice_type}.mp3"
+        tts = gTTS(text=translated_text, lang=lang_code, slow=False)
         tts.save(audio_path)
 
-        # ៣. ផ្ញើអត្ថបទ និងឯកសារសម្លេង (Voice MP3) ទៅ Telegram User
-        await query.message.reply_text(f"📝 **អត្ថបទបកប្រែ ({selected_lang})៖**\n\n{result_text}")
+        # ៣. ផ្ញើអត្ថបទបកប្រែ និងឯកសារសម្លេង (Voice MP3) ទៅ Telegram User
+        await query.message.reply_text(f"📝 **អត្ថបទបកប្រែជា ({selected_lang})៖**\n\n{translated_text}")
         
         with open(audio_path, 'rb') as audio_file:
             await query.message.reply_audio(
                 audio=audio_file,
-                title=f"Voiceover ({selected_lang} - {voice_label})",
-                caption=f"🎙️ ឯកសារសម្លេង ({voice_label}) សម្រាប់យកទៅប្រើប្រាស់ជាមួយវីដេអូ!"
+                title=f"Translation ({selected_lang} - {voice_label})",
+                caption=f"🎙️ ឯកសារសម្លេង ({voice_label}) សម្រាប់យកទៅប្រើប្រាស់!"
             )
 
     except Exception as e:
-        logger.error(f"Error processing stable video translation: {e}")
-        await query.message.reply_text("❌ មានបញ្ហាក្នុងការបកប្រែជាមួយ Gemini សូមព្យាយាមម្តងទៀត!")
+        logger.error(f"Error in text translation: {e}")
+        await query.message.reply_text("❌ មានបញ្ហាក្នុងការបកប្រែអត្ថបទ សូមព្យាយាមម្តងទៀត!")
 
     finally:
         # សម្អាត File ออกจาก Server
-        if file_path and os.path.exists(file_path):
-            os.remove(file_path)
         if audio_path and os.path.exists(audio_path):
             os.remove(audio_path)
-        if video_uploaded:
-            try:
-                ai_client.files.delete(name=video_uploaded.name)
-            except:
-                pass
 
 def main():
     t = Thread(target=run_flask)
@@ -154,11 +136,11 @@ def main():
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.VIDEO | filters.Document.VIDEO, handle_video))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     application.add_handler(CallbackQueryHandler(select_language, pattern="^lang_"))
     application.add_handler(CallbackQueryHandler(select_voice, pattern="^voice_"))
 
-    print("Bot is starting with Stable Gemini 1.5 Flash support...")
+    print("Bot is starting with Stable Text-to-Speech support...")
     application.run_polling()
 
 if __name__ == "__main__":
