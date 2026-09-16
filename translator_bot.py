@@ -27,7 +27,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Telegram Text-to-Speech Translator Bot is running successfully!"
+    return "Telegram Multipurpose Translator Bot is running successfully!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
@@ -36,14 +36,20 @@ def run_flask():
 # Command /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
-        "💬 **ស្វាគមន៍មកកាន់ Text-to-Speech Translator Bot!**\n\n"
+        "🎬 **ស្វាគមន៍មកកាន់ Translator & Voice Bot!**\n\n"
         "វិធីប្រើប្រាស់៖\n"
-        "1. ផ្ញើអត្ថបទ ឬឃ្លាដែលចង់បកប្រែមកទីនេះ\n"
+        "1. ផ្ញើអត្ថបទ (Text) ឬចំណងជើងដែលចង់បកប្រែមកទីនេះ\n"
         "2. ជ្រើសរើសភាសា (ខ្មែរ ឬ អង់គ្លេស)\n"
         "3. ជ្រើសរើសប្រភេទសំឡេង (ស្រី ឬ ប្រុស)\n"
         "4. ទទួលបានអត្ថបទបកប្រែ និងឯកសារសម្លេង (Voice MP3) ភ្លាមៗតែម្ដង!"
     )
     await update.message.reply_text(welcome_text, parse_mode="Markdown")
+
+# ទទួលវីដេអូ (ឆ្លើយតបណែនាំភ្លាមៗ មិនឱ្យស្ងាត់)
+async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🎬 បងបានផ្ញើវីដេអូមក! ដើម្បីជៀសវាងការគាំង Error លើ Server សូមបង **Copy អត្ថបទ ឬសាច់រឿងក្នុងវីដេអូនោះ ផ្ញើមកកាន់ខ្ញុំ (Text)** វិញ បន្ទាប់មកខ្ញុំនឹងបកប្រែជាសំឡេង Voice MP3 ជូនភ្លាមៗយ៉ាងរលូនបង!"
+    )
 
 # ទទួលអត្ថបទពីអ្នកប្រើប្រាស់
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -51,10 +57,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = message.text if message else None
     
     if not user_text:
-        await message.reply_text("សូមផ្ញើមកជាអត្ថបទ (Text) មកកាន់ខ្ញុំ!")
         return
 
-    # រក្សាទុកអត្ថបទក្នុង user_data
     context.user_data['input_text'] = user_text
 
     keyboard = [
@@ -97,7 +101,6 @@ async def select_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     audio_path = None
 
     try:
-        # ១. ប្រើប្រាស់ Gemini 1.5 Flash ដើម្បីបកប្រែអត្ថបទ
         prompt = f"Translate the following text into {selected_lang} accurately and naturally for a voiceover:\n\n{input_text}"
         response = ai_client.models.generate_content(
             model='gemini-1.5-flash',
@@ -105,12 +108,10 @@ async def select_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         translated_text = response.text
 
-        # ២. បង្កើតឯកសារសម្លេង gTTS
         audio_path = f"translation_{voice_type}.mp3"
         tts = gTTS(text=translated_text, lang=lang_code, slow=False)
         tts.save(audio_path)
 
-        # ៣. ផ្ញើអត្ថបទបកប្រែ និងឯកសារសម្លេង (Voice MP3) ទៅ Telegram User
         await query.message.reply_text(f"📝 **អត្ថបទបកប្រែជា ({selected_lang})៖**\n\n{translated_text}")
         
         with open(audio_path, 'rb') as audio_file:
@@ -125,7 +126,6 @@ async def select_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("❌ មានបញ្ហាក្នុងការបកប្រែអត្ថបទ សូមព្យាយាមម្តងទៀត!")
 
     finally:
-        # សម្អាត File ออกจาก Server
         if audio_path and os.path.exists(audio_path):
             os.remove(audio_path)
 
@@ -136,11 +136,12 @@ def main():
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.VIDEO | filters.Document.VIDEO, handle_video))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     application.add_handler(CallbackQueryHandler(select_language, pattern="^lang_"))
     application.add_handler(CallbackQueryHandler(select_voice, pattern="^voice_"))
 
-    print("Bot is starting with Stable Text-to-Speech support...")
+    print("Bot is starting with Multipurpose support...")
     application.run_polling()
 
 if __name__ == "__main__":
